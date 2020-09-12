@@ -15,20 +15,20 @@ use std::iter::Iterator;
 use std::net::ToSocketAddrs;
 
 fn main() -> Result<()> {
-    let (mut tx, mut rx) = transport_channel(64, Layer4(Ipv4(IpNextHeaderProtocols::Icmp)))
-        .context("Failed to get transport channel")?;
-
     for addr in std::env::args().skip(1) {
         println!("Address: {}", addr);
+        let (mut tx, mut rx) = transport_channel(64, Layer4(Ipv4(IpNextHeaderProtocols::Icmp)))
+            .context("Failed to get transport channel. You need root priviledges")?;
         for addr in (addr.as_str(), 0)
             .to_socket_addrs()
             .context("Failed to get addresses")?
         {
             if !addr.is_ipv4() {
+                println!("Got IPV6 address");
                 continue;
             }
 
-            let addr = addr.ip();
+            let destination_addr = addr.ip();
 
             let mut buffer = [0_u8; 16];
             let mut echo_packet = echo_request::MutableEchoRequestPacket::new(&mut buffer[..])
@@ -41,19 +41,19 @@ fn main() -> Result<()> {
 
             println!("Sending {:?} to {}", echo_packet, addr);
 
-            tx.send_to(echo_packet, addr)
+            tx.send_to(echo_packet, destination_addr)
                 .context("Failed to send packet")?;
         }
+
+        let mut packet_iter = icmp_packet_iter(&mut rx);
+
+        while let Some((packet, addr_of_sender)) = packet_iter
+            .next_with_timeout(std::time::Duration::from_secs(50))
+            .context("failed to get packet")?
+        {
+            println!("{:<16}: {:?}", addr_of_sender, packet);
+            break;
+        }
     }
-
-    let mut packet_iter = icmp_packet_iter(&mut rx);
-
-    while let Some((packet, addr)) = packet_iter
-        .next_with_timeout(std::time::Duration::from_secs(5))
-        .context("failed to get packet")?
-    {
-        println!("{:<16}: {:?}", addr, packet);
-    }
-
     Ok(())
 }
