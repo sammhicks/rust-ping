@@ -103,8 +103,10 @@ fn main() -> Result<()> {
                             echo_reply.get_identifier() // checked works by manually pinging at same time
                         );
                     }
-                    let new_now = Instant::now();
-                    println!("IP V4 reponse time {:?}", new_now.duration_since(now));
+                    println!(
+                        "IP V4 reponse time {}",
+                        Instant::now().saturating_duration_since(now).as_micros()
+                    );
                     break;
                 }
             } else {
@@ -133,8 +135,10 @@ fn main() -> Result<()> {
                     .context("failed to get IP V6 packet")?
                 {
                     if addr_of_sender == destination_addr {
-                        let new_now = Instant::now();
-                        println!("IP V6 reponse time {:?}", new_now.duration_since(now));
+                        println!(
+                            "IP V6 reponse time {}",
+                            Instant::now().saturating_duration_since(now).as_micros()
+                        );
                         break;
                     } else if addr_of_sender.is_loopback() {
                         println!("IP V6 is loopback") // so ignoring it
