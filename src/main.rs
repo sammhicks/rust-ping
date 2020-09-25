@@ -186,30 +186,46 @@ fn ping(addr: String) -> Result<std::time::Duration, String> {
                         }
                         Ok(_number_of_bytes_sent) => {
                             let now = Instant::now(); // note when the packet was sent
+                            println!("trying to receive IP V6");
                             let mut packet_iter = icmp_packet_iter(&mut rxv6);
-                            while let Some((packet, addr_of_sender)) = packet_iter
-                                .next_with_timeout(std::time::Duration::from_secs(PING_WAIT_TIME))
-                                .context("failed to get IP V6 packet")
-                                .unwrap()
-                            {
-                                time = Instant::now().saturating_duration_since(now);
-                                if addr_of_sender == destination_addr {
-                                    println!("IP V6 reponse time {}", time.as_millis());
-                                    return Ok(time);
-                                } else if addr_of_sender.is_loopback() {
-                                    println!("IP V6 is loopback") // so ignoring it
-                                } else if addr_of_sender.to_string()[0..6] == "fe80::".to_string() {
-                                    println!("got link local address") // so ignoring it
-                                } else {
-                                    println!(
-                                        "got packet from address {} with contents {:?}",
-                                        addr_of_sender, packet
-                                    );
-                                };
+
+                            loop {
+                                match packet_iter
+                                    .next_with_timeout(std::time::Duration::from_secs(PING_WAIT_TIME))
+                                {
+                                    Err(error) => return Err (format!("Got the following error when trying to receive an IP V6 packets{:?}", error)),
+                                    Ok(None) => return Err (format!("Timed out when trying to receive an IP V6 packet")),
+                                    Ok(packet_received_option) => {
+                                        match packet_received_option{
+                                            Some(packet_received) => {
+                                                time = Instant::now().saturating_duration_since(now);
+                                                let (icmp_packet, addr_of_sender) = packet_received;
+                                                println!(
+                                                    "Address of sender of IP v6 packet is {} {:?}",
+                                                    addr_of_sender, icmp_packet
+                                                );
+
+                                                if addr_of_sender == destination_addr {
+                                                    println!("IP V6 reponse time {}", time.as_millis());
+                                                    return Ok(time);
+                                                } else if addr_of_sender.is_loopback() {
+                                                    println!("IP V6 is loopback") // so ignoring it
+                                                } else if addr_of_sender.to_string()[0..6] == "fe80::".to_string() {
+                                                    println!("got link local address") // so ignoring it
+                                                } else {
+                                                    println!(
+                                                        "got packet from address {} with contents {:?}",
+                                                        addr_of_sender, icmp_packet
+                                                    );
+                                                };
+                                            },
+                                            None => println!("Why is this line needed??????!!!!!!!"),
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                    return Err("Did not get an IP V6 packet".to_string());
                 }
             }
         }
