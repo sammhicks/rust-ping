@@ -176,30 +176,38 @@ fn ping(addr: String) -> Result<std::time::Duration, String> {
                     //echo_packet.set_identifier(identifier);
                     echo_packet.set_checksum(util::checksum(echo_packet.packet(), 1));
                     println!("About to send following IP V6 packet{:?}", echo_packet);
-                    txv6.send_to(echo_packet, destination_addr)
-                        .context("Failed to send IPv6 packet")
-                        .unwrap();
-                    let now = Instant::now(); // note when the packet was sent
-                    let mut packet_iter = icmp_packet_iter(&mut rxv6);
-                    while let Some((packet, addr_of_sender)) = packet_iter
-                        .next_with_timeout(std::time::Duration::from_secs(PING_WAIT_TIME))
-                        .context("failed to get IP V6 packet")
-                        .unwrap()
-                    {
-                        time = Instant::now().saturating_duration_since(now);
-                        if addr_of_sender == destination_addr {
-                            println!("IP V6 reponse time {}", time.as_millis());
-                            return Ok(time);
-                        } else if addr_of_sender.is_loopback() {
-                            println!("IP V6 is loopback") // so ignoring it
-                        } else if addr_of_sender.to_string()[0..6] == "fe80::".to_string() {
-                            println!("got link local address") // so ignoring it
-                        } else {
-                            println!(
-                                "got packet from address {} with contents {:?}",
-                                addr_of_sender, packet
-                            );
-                        };
+                    let txv6_send_result = txv6.send_to(echo_packet, destination_addr);
+                    match txv6_send_result {
+                        Err(error) => {
+                            return Err(format!(
+                                "Failed to send  IP V6 ping. Got error '{:?}'",
+                                error
+                            ))
+                        }
+                        Ok(_number_of_bytes_sent) => {
+                            let now = Instant::now(); // note when the packet was sent
+                            let mut packet_iter = icmp_packet_iter(&mut rxv6);
+                            while let Some((packet, addr_of_sender)) = packet_iter
+                                .next_with_timeout(std::time::Duration::from_secs(PING_WAIT_TIME))
+                                .context("failed to get IP V6 packet")
+                                .unwrap()
+                            {
+                                time = Instant::now().saturating_duration_since(now);
+                                if addr_of_sender == destination_addr {
+                                    println!("IP V6 reponse time {}", time.as_millis());
+                                    return Ok(time);
+                                } else if addr_of_sender.is_loopback() {
+                                    println!("IP V6 is loopback") // so ignoring it
+                                } else if addr_of_sender.to_string()[0..6] == "fe80::".to_string() {
+                                    println!("got link local address") // so ignoring it
+                                } else {
+                                    println!(
+                                        "got packet from address {} with contents {:?}",
+                                        addr_of_sender, packet
+                                    );
+                                };
+                            }
+                        }
                     }
                     return Err("Did not get an IP V6 packet".to_string());
                 }
