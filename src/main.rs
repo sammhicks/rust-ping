@@ -70,97 +70,100 @@ fn ping(addr: String) -> Result<std::time::Duration, String> {
                     let identifier = random();
                     let mut buffer = [0_u8; 16];
 
-                    let mut echo_packet =
-                        echo_request::MutableEchoRequestPacket::new(&mut buffer[..])
-                            .context("Failed to get IP V4 request packet")
-                            .unwrap();
-                    echo_packet.set_sequence_number(sequence_number);
-                    echo_packet.set_identifier(identifier);
-                    echo_packet.set_icmp_type(IcmpTypes::EchoRequest);
-                    echo_packet.set_checksum(util::checksum(echo_packet.packet(), 1)); // 1 is the size
-
-                    let txv4_send_result = txv4.send_to(echo_packet, destination_addr);
-                    match txv4_send_result {
-                        Err(error) => {
-                            return Err(format!(
-                                "Failed to send  IP V4 ping. Got error '{:?}'",
-                                error
-                            ))
-                        }
-                        Ok(_number_of_bytes_sent) => {
-                            let now = Instant::now(); // note when the packet was sent
-                            println!("trying to receive ipv4");
-                            let mut packet_iter = icmp_packet_iter(&mut rxv4);
-                            loop {
-                                match packet_iter
-                                    .next_with_timeout(std::time::Duration::from_secs(PING_WAIT_TIME))
-                                {
-                                    Err(error) => return Err (format!("Got the following error when trying to receive an IP V4 packets{:?}", error)),
-                                    Ok(None) => return Err (format!("Timed out when trying to receive an IP V4 packet")),
-                                    Ok(packet_received_option) => {
-                                        match packet_received_option{
-                                            Some(packet_received) => {
-                                                time = Instant::now().saturating_duration_since(now);
-                                                let (icmp_packet, addr_of_sender) = packet_received;
-                                                println!(
-                                                    "address of sender of IP v4 packet is {} {:?}",
-                                                    addr_of_sender, icmp_packet
-                                                );
-                                                match icmp_packet.get_icmp_type() {
-                                                    IcmpTypes::EchoReply => (),
-                                                    IcmpTypes::DestinationUnreachable => {
-                                                        return Err("Destination Unreachable".to_string());
-                                                    }
-                                                    icmp_type => {
-                                                        return Err(format!(
-                                                            "Ignorring packet of type '{:?}'",
-                                                            icmp_type
-                                                        ));
-                                                    }
-                                                }
-                                                if icmp_packet.get_icmp_code() != IcmpCodes::NoCode {
-                                                    return Err(format!(
-                                                        "Ignorring packet with invalid ICMP code: {:?}",
-                                                        icmp_packet.get_icmp_code()
-                                                    ));
-                                                }
-                                                if destination_addr != addr_of_sender {
-                                                    println!(
-                                                        "Unexpected ping response from {:<16}:",
-                                                        addr_of_sender
-                                                    );
-                                                    continue;
-                                                }
-
-                                                let echo_reply_response =  EchoReplyPacket::new(icmp_packet.packet());
-                                                    match echo_reply_response{
-                                                    Some (echo_reply) => {
-                                                        if sequence_number != echo_reply.get_sequence_number() {
-                                                            println!(
-                                                                "Sequence number: Request - {} ; Response - {}",
-                                                                sequence_number,
-                                                                echo_reply.get_sequence_number() // checked works by manually pinging at same time
-                                                            ); // we got a ping response from ping request we did not send; so ignore this response & wait for one we did send
+                    let echo_packet_request =
+                        echo_request::MutableEchoRequestPacket::new(&mut buffer[..]);
+                    match echo_packet_request {
+                        None => return Err(format!("Failed to get IP V4 request packet")),
+                        Some(mut echo_packet) => {
+                            echo_packet.set_sequence_number(sequence_number);
+                            echo_packet.set_identifier(identifier);
+                            echo_packet.set_icmp_type(IcmpTypes::EchoRequest);
+                            echo_packet.set_checksum(util::checksum(echo_packet.packet(), 1));
+                            // 1 is the size
+                            let txv4_send_result = txv4.send_to(echo_packet, destination_addr);
+                            match txv4_send_result {
+                                Err(error) => {
+                                    return Err(format!(
+                                        "Failed to send  IP V4 ping. Got error '{:?}'",
+                                        error
+                                    ))
+                                }
+                                Ok(_number_of_bytes_sent) => {
+                                    let now = Instant::now(); // note when the packet was sent
+                                    println!("trying to receive ipv4");
+                                    let mut packet_iter = icmp_packet_iter(&mut rxv4);
+                                    loop {
+                                        match packet_iter
+                                            .next_with_timeout(std::time::Duration::from_secs(PING_WAIT_TIME))
+                                        {
+                                            Err(error) => return Err (format!("Got the following error when trying to receive an IP V4 packets{:?}", error)),
+                                            Ok(None) => return Err (format!("Timed out when trying to receive an IP V4 packet")),
+                                            Ok(packet_received_option) => {
+                                                match packet_received_option{
+                                                    Some(packet_received) => {
+                                                        time = Instant::now().saturating_duration_since(now);
+                                                        let (icmp_packet, addr_of_sender) = packet_received;
+                                                        println!(
+                                                            "address of sender of IP v4 packet is {} {:?}",
+                                                            addr_of_sender, icmp_packet
+                                                        );
+                                                        match icmp_packet.get_icmp_type() {
+                                                            IcmpTypes::EchoReply => (),
+                                                            IcmpTypes::DestinationUnreachable => {
+                                                                return Err("Destination Unreachable".to_string());
+                                                            }
+                                                            icmp_type => {
+                                                                return Err(format!(
+                                                                    "Ignorring packet of type '{:?}'",
+                                                                    icmp_type
+                                                                ));
+                                                            }
                                                         }
-                                                        if identifier != echo_reply.get_identifier() {
+                                                        if icmp_packet.get_icmp_code() != IcmpCodes::NoCode {
+                                                            return Err(format!(
+                                                                "Ignorring packet with invalid ICMP code: {:?}",
+                                                                icmp_packet.get_icmp_code()
+                                                            ));
+                                                        }
+                                                        if destination_addr != addr_of_sender {
                                                             println!(
-                                                                "Got ping with incorrect IP V4 Identifier: Request - {} ; Response - {}",
-                                                                identifier,
-                                                                echo_reply.get_identifier() // checked works by manually pinging at same time
+                                                                "Unexpected ping response from {:<16}:",
+                                                                addr_of_sender
                                                             );
+                                                            continue;
                                                         }
+        
+                                                        let echo_reply_response =  EchoReplyPacket::new(icmp_packet.packet());
+                                                            match echo_reply_response{
+                                                            Some (echo_reply) => {
+                                                                if sequence_number != echo_reply.get_sequence_number() {
+                                                                    println!(
+                                                                        "Sequence number: Request - {} ; Response - {}",
+                                                                        sequence_number,
+                                                                        echo_reply.get_sequence_number() // checked works by manually pinging at same time
+                                                                    ); // we got a ping response from ping request we did not send; so ignore this response & wait for one we did send
+                                                                }
+                                                                if identifier != echo_reply.get_identifier() {
+                                                                    println!(
+                                                                        "Got ping with incorrect IP V4 Identifier: Request - {} ; Response - {}",
+                                                                        identifier,
+                                                                        echo_reply.get_identifier() // checked works by manually pinging at same time
+                                                                    );
+                                                                }
+                                                            },
+                                                            None => return Err (format! ("Received ping response with the incorrect size")),
+                                                            }
+                                                        println!("IP V4 response time {}", time.as_micros() as f32 /1000.0);
+                                                        //return Ok(time);
+                                                        // commented out so we can check the IP v6 stuff                return Ok(time);
+                                                        break;
                                                     },
-                                                    None => return Err (format! ("Received ping response with the incorrect size")),
-                                                    }
-                                                println!("IP V4 response time {}", time.as_micros() as f32 /1000.0);
-                                                //return Ok(time);
-                                                // commented out so we can check the IP v6 stuff                return Ok(time);
-                                                break;
-                                            },
-                                            None => println!("Why is this line needed??????!!!!!!!"),
-                                        }
+                                                    None => println!("Why is this line needed??????!!!!!!!"),
+                                                }
+                                            }
+                                        };
                                     }
-                                };
+                                }
                             }
                         }
                     }
