@@ -47,16 +47,19 @@ struct PingErrors {
 
 fn main() -> Result<()> {
     for addr in std::env::args().skip(1) {
-        println!("Address to ping: {}", addr);
+        println!("Address to ping: {}", &addr);
 
-        let res = ping(addr);
-        match res {
-            Ok(time) => println!(
-                "ping time in main {} ms",
-                (time.as_nanos() as f32) / 1_000_000.0
-            ),
-            Err(error) => println!("Error in main {:?}", error),
-        };
+        loop {
+            let res = ping(addr.to_string()); //we use addr.to_string as we want to reuse the same value
+            match res {
+                Ok(time) => println!(
+                    "ping time in main {} ms",
+                    (time.as_nanos() as f32) / 1_000_000.0
+                ),
+                Err(error) => println!("Error in main {:?}", error),
+            };
+            std::thread::sleep(std::time::Duration::from_secs(4));
+        }
     }
     Ok(())
 }
@@ -126,7 +129,7 @@ fn ping(addr: String) -> Result<std::time::Duration, PingErrors> {
                                 }
                                 Ok(_number_of_bytes_sent) => {
                                     let now = Instant::now(); // note when the packet was sent
-                                    println!("trying to receive ipv4");
+                                                              //println!("trying to receive ipv4");
                                     let mut packet_iter = icmp_packet_iter(&mut rxv4);
                                     loop {
                                         match packet_iter
@@ -189,9 +192,9 @@ fn ping(addr: String) -> Result<std::time::Duration, PingErrors> {
                                                             None => return Err (PingErrors{error_enumeration: PingErrorEnumeration::InvalidIPV4PingSize, error_string: format! ("Received ping response with the incorrect size")}),
                                                             }
                                                         println!("IP V4 response time {}", time.as_micros() as f32 /1000.0);
-                                                        //return Ok(time);
+                                                        return Ok(time);
                                                         // commented out so we can check the IP v6 stuff                return Ok(time);
-                                                        break;
+                                                        //break;
                                                     },
                                                     None => println!("Why is this line needed??????!!!!!!!"),
                                                 }
@@ -236,7 +239,7 @@ fn ping(addr: String) -> Result<std::time::Duration, PingErrors> {
                                 }
                                 Ok(_number_of_bytes_sent) => {
                                     let now = Instant::now(); // note when the packet was sent
-                                    println!("trying to receive IP V6");
+                                                              //println!("trying to receive IP V6");
                                     let mut packet_iter = icmp_packet_iter(&mut rxv6);
 
                                     loop {
