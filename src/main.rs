@@ -83,7 +83,7 @@ fn main() -> Result<()> {
 }
 
 fn ping(addr: String) -> Result<std::time::Duration, PingError> {
-    const PING_WAIT_TIME: u64 = 5;
+    const PING_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(4);
     const IPV4_BUFFER_SIZE: usize = 64;
     const IPV6_BUFFER_SIZE: usize = 120;
 
@@ -132,9 +132,7 @@ fn ping(addr: String) -> Result<std::time::Duration, PingError> {
                                 let mut packet_iter = icmp_packet_iter(&mut rxv4);
                                 //  Result<Option<(IcmpPacket, IpAddr)>, std::io::Error>
                                 loop {
-                                    match packet_iter.next_with_timeout(
-                                        std::time::Duration::from_secs(PING_WAIT_TIME),
-                                    ) {
+                                    match packet_iter.next_with_timeout(PING_WAIT_TIME) {
                                         Result::Err(io_error) => {
                                             return Err(PingError::ErrorWhileWaitingForIPV4 {
                                                 io_error,
@@ -231,9 +229,7 @@ fn ping(addr: String) -> Result<std::time::Duration, PingError> {
                                 let now = Instant::now(); // note when the packet was sent
                                 let mut packet_iter = icmp_packet_iter(&mut rxv6);
                                 loop {
-                                    match packet_iter.next_with_timeout(
-                                        std::time::Duration::from_secs(PING_WAIT_TIME),
-                                    ) {
+                                    match packet_iter.next_with_timeout(PING_WAIT_TIME) {
                                         Err(io_error) => {
                                             return Err(PingError::ErrorWhileWaitingForIPV6 {
                                                 io_error,
