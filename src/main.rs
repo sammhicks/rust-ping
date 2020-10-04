@@ -120,8 +120,6 @@ fn ping(addr: String) -> Result<std::time::Duration, PingErrorEnumeration> {
 
     // map_err( std::result::Result<std::vec::IntoIter<std::net::SocketAddr>, std::io::Error>, (std::io::Error -> PingErrors) ) -> std::result::Result<std::vec::IntoIter<std::net::SocketAddr>, PingErrors>
 
-    // let mapped_dns_
-
     for ip_addr in ip_addresses {
         let destination_addr = ip_addr.ip(); //used by IP V4 & V6
         let mut time: std::time::Duration; // this will be the time we send the Ping packet
@@ -144,6 +142,10 @@ fn ping(addr: String) -> Result<std::time::Duration, PingErrorEnumeration> {
                         std::net::SocketAddr::V4(_) => (&mut txv4, &mut rxv4),
                         std::net::SocketAddr::V6(_) => (&mut txv6, &mut rxv6),
                     };*/
+
+                    //let _ =txv4.send_to(echo_packet, destination_addr){
+                    //   Ok{a} => a
+                    //}
 
                     let txv4_send_result = txv4.send_to(echo_packet, destination_addr);
                     match txv4_send_result {
@@ -272,42 +274,34 @@ fn ping(addr: String) -> Result<std::time::Duration, PingErrorEnumeration> {
                                             },
                                         )
                                     }
-                                    Ok(None) => return Err(PingErrorEnumeration::IPV6Timeout),
-                                    Ok(packet_received_option) => {
-                                        match packet_received_option {
-                                            Some(packet_received) => {
-                                                time =
-                                                    Instant::now().saturating_duration_since(now);
-                                                let (icmp_packet, addr_of_sender) = packet_received;
-                                                println!(
-                                                    "Address of sender of IP v6 packet is {} {:?}",
-                                                    addr_of_sender, icmp_packet
-                                                );
-                                                if addr_of_sender == destination_addr {
-                                                    println!(
-                                                        "IP V6 reponse time {}",
-                                                        time.as_millis()
-                                                    );
-                                                    return Ok(time);
-                                                } else if addr_of_sender.is_loopback() {
-                                                    println!("IP V6 is loopback")
-                                                // so ignoring it
-                                                } else if addr_of_sender.to_string()[0..6]
-                                                    == "fe80::".to_string()
-                                                {
-                                                    println!("got link local address")
-                                                // so ignoring it
-                                                } else {
-                                                    println!(
-                                                                "got packet from address {} with contents {:?}",
-                                                                addr_of_sender, icmp_packet
-                                                            );
-                                                };
-                                            }
-                                            None => {
-                                                println!("Why is this line needed??????!!!!!!!")
-                                            }
-                                        }
+                                    Ok(Option::None) => {
+                                        return Err(PingErrorEnumeration::IPV6Timeout)
+                                    }
+                                    Ok(Option::Some(packet_received)) => {
+                                        // this matches the case where we receive a packet; we do not need to explicitly match the case Ok(None), as that is caught by the previous match statement
+                                        time = Instant::now().saturating_duration_since(now);
+                                        let (icmp_packet, addr_of_sender) = packet_received;
+                                        println!(
+                                            "Address of sender of IP v6 packet is {} {:?}",
+                                            addr_of_sender, icmp_packet
+                                        );
+                                        if addr_of_sender == destination_addr {
+                                            println!("IP V6 reponse time {}", time.as_millis());
+                                            return Ok(time);
+                                        } else if addr_of_sender.is_loopback() {
+                                            println!("IP V6 is loopback")
+                                        // so ignoring it
+                                        } else if addr_of_sender.to_string()[0..6]
+                                            == "fe80::".to_string()
+                                        {
+                                            println!("got link local address")
+                                        // so ignoring it
+                                        } else {
+                                            println!(
+                                                "got packet from address {} with contents {:?}",
+                                                addr_of_sender, icmp_packet
+                                            );
+                                        };
                                     }
                                 }
                             }
