@@ -1,4 +1,4 @@
-use anyhow::Context;
+//use anyhow::Context;
 
 use pnet::{
     packet::{
@@ -55,25 +55,7 @@ enum PingError {
 }
 
 fn main() {
-    const IPV4_BUFFER_SIZE: usize = 64;
-    const IPV6_BUFFER_SIZE: usize = 120;
-    let (txv4, rxv4) =
-        transport_channel(IPV4_BUFFER_SIZE, Layer4(Ipv4(IpNextHeaderProtocols::Icmp)))
-            .context("Failed to get transport channel. You need root priviledges")
-            .unwrap();
-    let (txv6, rxv6) = transport_channel(
-        IPV6_BUFFER_SIZE,
-        Layer4(Ipv6(IpNextHeaderProtocols::Icmpv6)),
-    )
-    .context("Failed to get transport channel. You need root priviledges")
-    .unwrap();
-
-    let mut pinger = Pinger {
-        txv4,
-        rxv4,
-        txv6,
-        rxv6,
-    };
+    let mut pinger = Pinger::new().unwrap();
 
     for addr in std::env::args().skip(1) {
         println!("Address to ping: {}", &addr);
@@ -91,34 +73,60 @@ fn main() {
         }
     }
 }
+#[derive(Debug)]
+struct NeedsToBeRunWithRootPriviledges;
+
+impl std::convert::From<std::io::Error> for NeedsToBeRunWithRootPriviledges {
+    fn from(_: std::io::Error) -> Self {
+        Self
+    }
+}
 
 struct Pinger {
-    txv4: TransportSender,
+    txv4: pnet::transport::TransportSender,
     rxv4: TransportReceiver,
     txv6: TransportSender,
     rxv6: TransportReceiver,
 }
 
 impl Pinger {
-    fn ping(self: &mut Pinger, addr: String) -> Result<std::time::Duration, PingError> {
+    fn new() -> Result<Pinger, NeedsToBeRunWithRootPriviledges> {
+        const IPV4_BUFFER_SIZE: usize = 64;
+        const IPV6_BUFFER_SIZE: usize = 120;
+        let (txv4, rxv4) =
+            transport_channel(IPV4_BUFFER_SIZE, Layer4(Ipv4(IpNextHeaderProtocols::Icmp)))?;
+        //if it fails, transport_channel returns an error of type <std::io::Error>, but earlier, we have said covert this error to one of type
+        //NeedsToBeRunWithRootPriviledges, so, if we get the error returned to us, we return the error NeedsToBeRunWithRootPriviledges
+        //The error reported by the OS is  'PermissionDenied, message: "Operation not permitted"'
+
+        let (txv6, rxv6) =
+            transport_channel(IPV6_BUFFER_SIZE, Layer4(Ipv6(IpNextHeaderProtocols::Icmp)))?;
+
+        // a longer version of the previous statement
+        // let (txv6, rxv6) =
+        //     match transport_channel(IPV6_BUFFER_SIZE, Layer4(Ipv6(IpNextHeaderProtocols::Icmp))) {
+        //         Ok(channel) => channel,
+        //         Err(_) => return Err(NeedsToBeRunWithRootPriviledges),
+        //     };
+
+        // in the commented out version, we explicitly map the error to be of type
+        /*let (txv6, rxv6) =
+        transport_channel(IPV6_BUFFER_SIZE, Layer4(Ipv6(IpNextHeaderProtocols::Icmp)))
+            .map_err(|_| NeedsToBeRunWithRootPriviledges)?; */
+
+        Ok(Pinger {
+            txv4,
+            rxv4,
+            txv6,
+            rxv6,
+        })
+    }
+
+    fn ping(&mut self, addr: String) -> Result<std::time::Duration, PingError> {
         const PING_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(4);
-
-        let now = Instant::now(); // note when the packet was sent
-
-        println!(
-            "ye time {}  in us",
-            Instant::now().saturating_duration_since(now).as_micros()
-        );
-
-        let dns_result = (addr.as_str(), 0).to_socket_addrs(); // 0 is the port number, which is needed but not used
-
-        let ip_addresses = match dns_result {
-            Ok(interation_of_addresses) => interation_of_addresses, // this will match if DNS lookup works, in which case the program continues
-            Err(io_error) => {
-                //DNS lookup failed, so we get here. As we have an early return, the match returns the desired iteration
-                return Err(PingError::DnsLookupError { addr, io_error });
-            }
-        }; // this let statment is the equivalent of "if dns_result is a failure, return early", otherwise the iteration ip_addresses is extracted from dns_result.
+        let ip_addresses = (addr.as_str(), 0) // 0 is the port number, which is needed but not used
+            .to_socket_addrs()
+            .map_err(|io_error| PingError::DnsLookupError { addr, io_error })?;
 
         for ip_addr in ip_addresses {
             let destination_addr = ip_addr.ip(); //used by IP V4 & V6
@@ -129,104 +137,82 @@ impl Pinger {
                     let identifier = random();
                     let mut buffer = [0_u8; 16];
 
+                    /*let mut echo_packet =
                     match echo_request::MutableEchoRequestPacket::new(&mut buffer[..]) {
                         Option::None => return Err(PingError::FailedToGetIPV4RequestPacket),
-                        Option::Some(mut echo_packet) => {
-                            echo_packet.set_sequence_number(sequence_number);
-                            echo_packet.set_identifier(identifier);
-                            echo_packet.set_icmp_type(IcmpTypes::EchoRequest);
-                            echo_packet.set_checksum(util::checksum(echo_packet.packet(), 1));
-                            // 1 is the size
+                        Option::Some(echo_packet) => echo_packet,
+                    };*/
 
-                            match self.txv4.send_to(echo_packet, destination_addr) {
-                                Err(io_error) => {
-                                    return Err(PingError::FailedtoSendIPV4 { io_error })
-                                }
-                                Ok(_number_of_bytes_sent) => {
-                                    let now = Instant::now(); // note when the packet was sent
-                                    let mut packet_iter = icmp_packet_iter(&mut self.rxv4);
-                                    //  Result<Option<(IcmpPacket, IpAddr)>, std::io::Error>
-                                    loop {
-                                        match packet_iter.next_with_timeout(PING_WAIT_TIME) {
-                                            Result::Err(io_error) => {
-                                                return Err(PingError::ErrorWhileWaitingForIPV4 {
-                                                    io_error,
-                                                })
-                                            }
-                                            Result::Ok(Option::None) => {
-                                                return Err(PingError::IPV4Timeout)
-                                            }
-                                            Result::Ok(Option::Some(packet_received)) => {
-                                                time =
-                                                    Instant::now().saturating_duration_since(now);
-                                                let (icmp_packet, addr_of_sender) = packet_received;
-                                                println!(
-                                                    "address of sender of IP v4 packet is {} {:?}",
-                                                    addr_of_sender, icmp_packet
-                                                );
-                                                match icmp_packet.get_icmp_type() {
-                                                    IcmpTypes::EchoReply => (),
-                                                    IcmpTypes::DestinationUnreachable => {
-                                                        return Err(
-                                                            PingError::IPV4DestinationUnreachable,
-                                                        );
-                                                    }
-                                                    icmp_type => {
-                                                        return Err(
-                                                            PingError::IgnoringIPV4PacketOfType {
-                                                                icmp_type,
-                                                            },
-                                                        );
-                                                    }
-                                                }
-                                                if icmp_packet.get_icmp_code() != IcmpCodes::NoCode
-                                                {
-                                                    return Err(
-                                                    PingError::IgnoringIPV4PacketWithInvalidICMP {
-                                                        icmp_code: icmp_packet.get_icmp_code(),
-                                                    },
-                                                );
-                                                }
-                                                if destination_addr != addr_of_sender {
-                                                    println!(
-                                                        "Unexpected ping response from {:<16}:",
-                                                        addr_of_sender
-                                                    );
-                                                    continue;
-                                                }
-                                                match EchoReplyPacket::new(icmp_packet.packet()) {
-                                                    Some(echo_reply) => {
-                                                        if sequence_number
-                                                            != echo_reply.get_sequence_number()
-                                                        {
-                                                            println!("Sequence number: Request - {} ; Response - {}", sequence_number,
-                                                                        echo_reply.get_sequence_number() // checked works by manually pinging at same time
-                                                                    ); // we got a ping response from ping request we did not send; so ignore this response & wait for one we did send
-                                                        }
-                                                        if identifier != echo_reply.get_identifier()
-                                                        {
-                                                            println!("Got ping with incorrect IP V4 Identifier: Request - {} ; Response - {}",
-                                                        identifier, echo_reply.get_identifier());
-                                                            // checked works by manually pinging at same time
-                                                        }
-                                                    }
-                                                    None => {
-                                                        return Err(PingError::InvalidIPV4PingSize)
-                                                    }
-                                                }
-                                                println!(
-                                                    "IP V4 response time {}",
-                                                    time.as_micros() as f32 / 1000.0
-                                                );
-                                                return Ok(time);
-                                                // commented out so we can check the IP v6 stuff                return Ok(time);
-                                                //break;
-                                            }
-                                        }
-                                    }
-                                }
+                    let mut echo_packet =
+                        echo_request::MutableEchoRequestPacket::new(&mut buffer[..])
+                            .ok_or(PingError::FailedToGetIPV4RequestPacket)?;
+
+                    echo_packet.set_sequence_number(sequence_number);
+                    echo_packet.set_identifier(identifier);
+                    echo_packet.set_icmp_type(IcmpTypes::EchoRequest);
+                    echo_packet.set_checksum(util::checksum(echo_packet.packet(), 1));
+                    // 1 is the size
+
+                    let mut packet_iter = icmp_packet_iter(&mut self.rxv4);
+
+                    while packet_iter   //read & dump packets that are previously in the receive buffer, if there are any
+                        .next_with_timeout(std::time::Duration::from_micros(1))
+                        .map_err(|io_error| PingError::ErrorWhileWaitingForIPV4 { io_error })?
+                        .is_some()
+                    {}
+
+                    self.txv4
+                        .send_to(echo_packet, destination_addr)
+                        .map_err(|io_error| PingError::FailedtoSendIPV4 { io_error })?;
+
+                    let now = Instant::now(); // note when the packet was sent
+                    let mut packet_iter = icmp_packet_iter(&mut self.rxv4);
+                    //  Result<Option<(IcmpPacket, IpAddr)>, std::io::Error>
+                    loop {
+                        let packet_received = packet_iter
+                            .next_with_timeout(PING_WAIT_TIME)
+                            .map_err(|io_error| PingError::ErrorWhileWaitingForIPV4 { io_error })?
+                            .ok_or(PingError::IPV4Timeout)?;
+
+                        time = Instant::now().saturating_duration_since(now);
+                        let (icmp_packet, addr_of_sender) = packet_received;
+                        //println!("address of sender of IP v4 packet is {} {:?}", addr_of_sender, icmp_packet);
+                        match icmp_packet.get_icmp_type() {
+                            IcmpTypes::EchoReply => (),
+                            IcmpTypes::DestinationUnreachable => {
+                                return Err(PingError::IPV4DestinationUnreachable);
+                            }
+                            icmp_type => {
+                                return Err(PingError::IgnoringIPV4PacketOfType { icmp_type });
                             }
                         }
+                        if icmp_packet.get_icmp_code() != IcmpCodes::NoCode {
+                            return Err(PingError::IgnoringIPV4PacketWithInvalidICMP {
+                                icmp_code: icmp_packet.get_icmp_code(),
+                            });
+                        }
+                        if destination_addr != addr_of_sender {
+                            println!("Unexpected ping response from {:<16}:", addr_of_sender);
+                            continue;
+                        }
+                        let echo_reply = EchoReplyPacket::new(icmp_packet.packet())
+                            .ok_or(PingError::InvalidIPV4PingSize)?;
+                        if sequence_number != echo_reply.get_sequence_number() {
+                            println!(
+                                "Sequence number: Request - {} ; Response - {}",
+                                sequence_number,
+                                echo_reply.get_sequence_number() // checked works by manually pinging at same time
+                            ); // we got a ping response from ping request we did not send; so ignore this response & wait for one we did send
+                        }
+                        if identifier != echo_reply.get_identifier() {
+                            println!("Got ping with incorrect IP V4 Identifier: Request - {} ; Response - {}",
+                                                        identifier, echo_reply.get_identifier());
+                            // checked works by manually pinging at same time
+                        }
+                        println!("IP V4 response time {}", time.as_micros() as f32 / 1000.0);
+                        return Ok(time);
+                        // commented out so we can check the IP v6 stuff                return Ok(time);
+                        //break;
                     }
                 }
                 std::net::SocketAddr::V6(_) => {
