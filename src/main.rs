@@ -4,9 +4,9 @@ use pnet::{
     packet::{
         icmp::{
             echo_reply::{EchoReplyPacket, IcmpCodes},
-            echo_request, IcmpTypes,
+            echo_request, IcmpType, IcmpTypes,
         },
-        icmpv6::Icmpv6Types,
+        icmpv6::{Icmpv6Type, Icmpv6Types},
         ip::IpNextHeaderProtocols,
     },
     transport::{
@@ -51,6 +51,9 @@ enum PingError {
         io_error: std::io::Error,
     },
     IPV6Timeout,
+    IgnoringIPV6PacketOfType {
+        icmp_type: pnet::packet::icmpv6::Icmpv6Type,
+    },
     DNSLookupDidNotReturnAnyAddresses,
 }
 
@@ -220,12 +223,21 @@ impl Pinger {
                 std::net::SocketAddr::V6(_) => {
                     let mut buffer = [0_u8; 16];
                     let mut echo_packet =
+                        echo_request::MutableEchoRequestPacket::new(&mut buffer[..])
+                            .ok_or(PingError::FailedToGetIPV4RequestPacket)?;
+
+                    echo_packet.set_sequence_number(7);
+                    echo_packet.set_identifier(9);
+                    echo_packet.set_icmp_type(IcmpType::new(Icmpv6Types::EchoRequest.0));
+                    echo_packet.set_checksum(pnet::util::checksum(echo_packet.packet(), 1));
+
+                    /*let mut echo_packet =
                         pnet::packet::icmpv6::MutableIcmpv6Packet::new(&mut buffer[..])
                             .ok_or(PingError::FailedToGetIPV6RequestPacket)?;
                     //echo_packet.set_sequence_number(sequence_number);
                     //echo_packet.set_identifier(identifier);
                     echo_packet.set_icmpv6_type(Icmpv6Types::EchoRequest);
-                    echo_packet.set_checksum(pnet::util::checksum(echo_packet.packet(), 1));
+                    echo_packet.set_checksum(pnet::util::checksum(echo_packet.packet(), 1));*/
                     // 1 is the size
                     println!("About to send following IP V6 packet{:?}", echo_packet);
 
@@ -244,7 +256,20 @@ impl Pinger {
 
                         let echo_reply = EchoReplyPacket::new(icmp_packet.packet())
                             .ok_or(PingError::InvalidIPV4PingSize)?;
-                        if echo_reply.get_identifier() != 0 || echo_reply.get_sequence_number() != 0
+                        println!("IPV6 Response: {:?}", echo_reply);
+                        println!("TY{:?}", echo_reply.get_icmp_type());
+
+                        match Icmpv6Type::new(icmp_packet.get_icmp_type().0) {
+                            Icmpv6Types::EchoReply => (),
+                            Icmpv6Types::DestinationUnreachable => {
+                                return Err(PingError::IPV4DestinationUnreachable);
+                            }
+                            icmp_type => {
+                                return Err(PingError::IgnoringIPV6PacketOfType { icmp_type });
+                            }
+                        }
+
+                        if echo_reply.get_identifier() != 9 || echo_reply.get_sequence_number() != 7
                         //the library forces both the identifier & sequence number sent to be 0
                         {
                             return Err(PingError::IgnoringIPV6PacketWithInvalidContents);
